@@ -6,17 +6,28 @@ import java.util.List;
 import java.util.Map;
 
 public class Anime {
-    private String id; // Unique identifier for the anime
-    private String nombre; // Anime name
-    private List<String> generos; // List of genres (e.g., ["Acción", "Fantasia"])
-    private Map<String, Float> caracteristicas; // Map of characteristics (e.g., "Acción" -> 0.8)
+    private String id;
+    private String nombre;
+    private List<String> generos;
+    private Map<String, Float> caracteristicas;
 
-    // Constructor
+    // Constructor existente
     public Anime(String id, String nombre) {
         this.id = id;
         this.nombre = nombre;
         this.generos = new ArrayList<>();
         this.caracteristicas = new HashMap<>();
+    }
+
+    // Nuevo constructor para aceptar géneros y características
+    public Anime(String id, String nombre, List<Genero> generos, Map<String, Float> caracteristicas) {
+        this.id = id;
+        this.nombre = nombre;
+        this.generos = new ArrayList<>();
+        for (Genero genero : generos) {
+            this.generos.add(genero.toString());
+        }
+        this.caracteristicas = new HashMap<>(caracteristicas);
     }
 
     // Getters
@@ -36,7 +47,7 @@ public class Anime {
         return caracteristicas;
     }
 
-    // Metodo para añadir géneros y características
+    // Métodos para añadir géneros y características
     public void agregarGenero(String genero) {
         if (!generos.contains(genero)) {
             generos.add(genero);
@@ -44,7 +55,7 @@ public class Anime {
     }
 
     public void agregarCaracteristica(String clave, float valor) {
-        if (valor >= 0 && valor <= 1) { // Assuming characteristics are normalized between 0 and 1
+        if (valor >= 0 && valor <= 1) {
             caracteristicas.put(clave, valor);
         }
     }

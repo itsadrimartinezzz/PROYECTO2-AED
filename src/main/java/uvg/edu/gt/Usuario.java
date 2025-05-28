@@ -1,25 +1,21 @@
 package uvg.edu.gt;
 
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 public class Usuario {
-    private String id; // Identificador único del usuario
-    private String nombre; // Nombre del usuario
-    private List<String> preferencias; // Lista de géneros preferidos (e.g., ["Acción", "Comedia"])
-    private Map<Anime, Integer> calificaciones; // Mapa de los animes con sus user ratings
+    private String id;
+    private String nombre;
+    private Map<Genero, Integer> preferencias;
+    private Map<Anime, Integer> calificaciones;
 
-    // Constructor
     public Usuario(String id, String nombre) {
         this.id = id;
         this.nombre = nombre;
-        this.preferencias = new ArrayList<>();
+        this.preferencias = new HashMap<>();
         this.calificaciones = new HashMap<>();
     }
 
-    // Getters
     public String getId() {
         return id;
     }
@@ -28,7 +24,7 @@ public class Usuario {
         return nombre;
     }
 
-    public List<String> getPreferencias() {
+    public Map<Genero, Integer> obtenerPreferencias() {
         return preferencias;
     }
 
@@ -36,16 +32,29 @@ public class Usuario {
         return calificaciones;
     }
 
-    // Methods to add preferences and ratings
-    public void agregarPreferencia(String genero) {
-        if (!preferencias.contains(genero)) {
-            preferencias.add(genero);
-        }
+    public void agregarPreferencia(Genero genero, int valor) {
+        preferencias.put(genero, valor);
     }
 
     public void calificarAnime(Anime anime, int calificacion) {
-        if (calificacion >= 0 && calificacion <= 10) { // Assuming a 0-10 rating scale
+        if (calificacion >= 0 && calificacion <= 10) {
             calificaciones.put(anime, calificacion);
+            // Update preferences based on anime genres
+            for (String generoStr : anime.getGeneros()) {
+                Genero genero = Genero.valueOf(generoStr);
+                // Calculate the average rating for this genre
+                long count = calificaciones.keySet().stream()
+                    .filter(a -> a.getGeneros().contains(generoStr))
+                    .count(); // count() returns a long
+                if (count > 0) { // Ensure we don't divide by zero
+                    int sum = calificaciones.keySet().stream()
+                        .filter(a -> a.getGeneros().contains(generoStr))
+                        .mapToInt(a -> calificaciones.get(a))
+                        .sum(); // Sum the ratings for this genre
+                    int newRating = (int) (sum / count); // Calculate average
+                    preferencias.put(genero, newRating);
+                }
+            }
         }
     }
 

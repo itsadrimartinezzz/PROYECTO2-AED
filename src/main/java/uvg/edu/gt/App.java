@@ -7,7 +7,6 @@ import java.awt.*;
 import java.awt.event.*;
 import java.util.*;
 import java.util.List;
-import java.util.stream.Collectors;
 
 public class App {
     // Paleta de colores moderna y elegante
@@ -871,7 +870,7 @@ public class App {
             }
 
             sb.append("---------------------------------------------------------------\n");
-            sb.append("SISTEMA DE IA AVANZADA - PRECISION ALGORITHM v2.0\n");
+            sb.append("SISTEMA DE Recomedación - PRECISION ALGORITHM v2.0\n");
             sb.append("Disfruta tus nuevas recomendaciones de anime!\n");
             sb.append("---------------------------------------------------------------");
 

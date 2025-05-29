@@ -1,3 +1,4 @@
+//Proyecto 2 Grupo 6
 package uvg.edu.gt;
 
 import java.util.HashMap;

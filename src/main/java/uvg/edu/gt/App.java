@@ -933,9 +933,7 @@ public class App {
                     sb.append("   Géneros: ").append(String.join(", ", genres)).append("\n\n");
                 }
             } else {
-                sb.append("RECOMENDACIONES POR CONTENIDO\n");
-                sb.append("No se encontraron animes con características suficientemente similares.\n");
-                sb.append("   Tip: Califica con puntuaciones más altas (4+) para mejores resultados!\n\n");
+                sb.append("Las recomendaciones se hacen basadas en las calificaciones dadas a los 3 animes propuestos. Se recomienda basado en usuarios con ratings similares.\n");
             }
 
             sb.append("---------------------------------------------------------------\n");

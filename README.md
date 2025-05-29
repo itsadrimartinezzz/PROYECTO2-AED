@@ -1,7 +1,7 @@
 # PROYECTO 2
 
 Sistema de Recomendación de Animes  
-Implementa dos enfoques: filtrado por contenido y filtrado colaborativo.
+Implementa dos enfoques:  filtrado colaborativo.
 
 ---
 
@@ -9,7 +9,6 @@ Implementa dos enfoques: filtrado por contenido y filtrado colaborativo.
 
 Este proyecto en Java permite generar recomendaciones de animes basadas en:
 
-- **Contenido**: compara características de cada anime con los gustos del usuario.  
 - **Colaborativo**: agrupa usuarios según similitud de ratings y sugiere animes populares en su grupo.
 
 ---

@@ -43,7 +43,6 @@ public class App {
 
         // Componentes para recomendaciones
         private JTextField nombreField;
-        private Map<JCheckBox, Genero> generoCheckboxes;
         private Map<Anime, JSlider> animeSliders;
         private JTextArea recomendacionesArea;
         private JButton processButton;
@@ -164,7 +163,6 @@ public class App {
 
             getContentPane().setBackground(BACKGROUND_MAIN);
 
-            generoCheckboxes = new HashMap<>();
             animeSliders = new HashMap<>();
 
             createModernComponents();
@@ -339,9 +337,6 @@ public class App {
             contentPanel.add(createBusquedaAnimeCard());
             contentPanel.add(Box.createVerticalStrut(25));
 
-            contentPanel.add(createGenreCard());
-            contentPanel.add(Box.createVerticalStrut(25));
-
             contentPanel.add(createRatingCard());
             contentPanel.add(Box.createVerticalStrut(30));
 
@@ -396,7 +391,7 @@ public class App {
             titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 32));
             titleLabel.setPreferredSize(new Dimension(0, 60));
 
-            JLabel subtitleLabel = new JLabel("Descubre tu próximo anime favorito con IA avanzada",
+            JLabel subtitleLabel = new JLabel("Descubre tu próximo anime favorito ",
                     SwingConstants.CENTER);
             subtitleLabel.setFont(new Font("Segoe UI", Font.ITALIC, 16));
             subtitleLabel.setForeground(TEXT_SECONDARY);
@@ -440,59 +435,6 @@ public class App {
 
             card.add(contentPanel, BorderLayout.CENTER);
             return card;
-        }
-
-        private JPanel createGenreCard() {
-            JPanel card = createModernCard("Selecciona tus Géneros Favoritos");
-
-            JPanel contentPanel = new JPanel(new GridLayout(2, 3, 15, 15));
-            contentPanel.setBackground(CARD_BACKGROUND);
-            contentPanel.setBorder(new EmptyBorder(20, 20, 20, 20));
-
-            String[] genreNames = { "Acción", "Comedia", "Romance", "Fantasía", "Slice of Life" };
-            Genero[] generos = { Genero.ACCION, Genero.COMEDIA, Genero.ROMANCE, Genero.FANTASIA, Genero.SLICE_OF_LIFE };
-            Color[] genreColors = { WARNING_ORANGE, SUCCESS_GREEN, new Color(231, 76, 60), ACCENT_PURPLE,
-                    new Color(241, 196, 15) };
-
-            for (int i = 0; i < genreNames.length; i++) {
-                JCheckBox checkbox = createModernCheckbox(genreNames[i], genreColors[i]);
-                generoCheckboxes.put(checkbox, generos[i]);
-                contentPanel.add(checkbox);
-            }
-
-            if (genreNames.length % 2 != 0) {
-                contentPanel.add(new JPanel());
-            }
-
-            card.add(contentPanel, BorderLayout.CENTER);
-            return card;
-        }
-
-        private JCheckBox createModernCheckbox(String text, Color accentColor) {
-            JCheckBox checkbox = new JCheckBox(text) {
-                @Override
-                protected void paintComponent(Graphics g) {
-                    Graphics2D g2 = (Graphics2D) g.create();
-                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-                    if (getModel().isRollover()) {
-                        g2.setColor(new Color(accentColor.getRed(), accentColor.getGreen(), accentColor.getBlue(), 20));
-                        g2.fillRoundRect(0, 0, getWidth(), getHeight(), 12, 12);
-                    }
-
-                    g2.dispose();
-                    super.paintComponent(g);
-                }
-            };
-
-            checkbox.setOpaque(false);
-            checkbox.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-            checkbox.setForeground(TEXT_PRIMARY);
-            checkbox.setBorder(new EmptyBorder(12, 15, 12, 15));
-            checkbox.setCursor(new Cursor(Cursor.HAND_CURSOR));
-            checkbox.setFocusPainted(false);
-
-            return checkbox;
         }
 
         private JPanel createRatingCard() {
@@ -790,14 +732,6 @@ public class App {
                         try (Session session = neo4jDriver.session()) {
                             session.run("CREATE (u:User {id: $id, name: $name})",
                                     Map.of("id", userId, "name", nombre));
-
-                            for (Map.Entry<JCheckBox, Genero> entry : generoCheckboxes.entrySet()) {
-                                if (entry.getKey().isSelected()) {
-                                    session.run("MERGE (g:Genre {name: $name}) " +
-                                            "CREATE (u:User {id: $userId})-[:PREFERS {preferenceScore: 5}]->(g)",
-                                            Map.of("name", entry.getValue().toString(), "userId", userId));
-                                }
-                            }
 
                             boolean hasRatings = false;
                             for (Map.Entry<Anime, JSlider> entry : animeSliders.entrySet()) {

@@ -1,6 +1,6 @@
 package uvg.edu.gt;
 
-public enum Genero{
+public enum Genero {
     ACCION,
     COMEDIA,
     ROMANCE,

@@ -1,20 +1,13 @@
 package uvg.edu.gt;
 
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-
+import org.neo4j.driver.*;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
-import javax.swing.border.CompoundBorder;
-import javax.swing.border.LineBorder;
 import java.awt.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
+import java.awt.event.*;
+import java.util.*;
+import java.util.List;
+import java.util.stream.Collectors;
 
 public class App {
     // Paleta de colores moderna y elegante
@@ -30,15 +23,23 @@ public class App {
     private static final Color TEXT_SECONDARY = new Color(127, 140, 141);
     private static final Color BORDER_LIGHT = new Color(236, 240, 241);
 
+    // Neo4j connection details
+    private static final String URI = "neo4j+s://9da943ab.databases.neo4j.io";
+    private static final String USER = "neo4j";
+    private static final String PASSWORD = "1k5OjdNMoJvLwh-h2WCK6D-v1vLM_5KuQ6rC6VKD948";
+
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
             new AnimeRecommenderGUI().setVisible(true);
         });
     }
 
-    static class AnimeRecommenderGUI extends JFrame {
+    static class AnimeRecommenderGUI extends JFrame implements AutoCloseable {
         private List<Anime> allAnimes;
-        private BaseDeDatos baseDeDatos;
+        private Driver neo4jDriver;
+        private BaseDeDatos db;
+        private RecomendadorColaborativo recomendadorColaborativo;
+        private RecomendadorContenido recomendadorContenido;
 
         // Componentes para recomendaciones
         private JTextField nombreField;
@@ -54,7 +55,71 @@ public class App {
 
         public AnimeRecommenderGUI() {
             initializeData();
+            initializeNeo4j();
             setupModernGUI();
+            initializeRecommenders();
+        }
+
+        private void initializeNeo4j() {
+            neo4jDriver = GraphDatabase.driver(URI, AuthTokens.basic(USER, PASSWORD));
+            db = new BaseDeDatos(neo4jDriver);
+            try (Session session = neo4jDriver.session()) {
+                initializeDatabase(session);
+            }
+        }
+
+        private void initializeDatabase(Session session) {
+            List<String> genres = Arrays.asList("ACCION", "COMEDIA", "ROMANCE", "FANTASIA", "SLICE_OF_LIFE");
+            for (String genre : genres) {
+                session.run("MERGE (:Genre {name: $name})", Map.of("name", genre));
+            }
+
+            for (Anime anime : allAnimes) {
+                String characteristicsJson = mapToJsonString(anime.obtenerCaracteristicas());
+                session.run(
+                        "MERGE (a:Anime {id: $id, name: $name, genres: $genres, characteristics: $characteristics})",
+                        Map.of("id", anime.getId(), "name", anime.getNombre(), "genres", anime.getGeneros(),
+                                "characteristics", characteristicsJson));
+            }
+
+            session.run("MERGE (u:User {id: 'U2', name: 'Luis'})");
+            session.run("MATCH (u:User {id: 'U2'}), (a:Anime {id: 'A1'}) MERGE (u)-[:RATED {rating: 4}]->(a)");
+            session.run("MATCH (u:User {id: 'U2'}), (a:Anime {id: 'A2'}) MERGE (u)-[:RATED {rating: 3}]->(a)");
+
+            precomputeAnimeSimilarities(session);
+        }
+
+        // Utility method to convert Map<String, Float> to JSON string
+        private String mapToJsonString(Map<String, Float> map) {
+            if (map == null || map.isEmpty()) {
+                return "{}";
+            }
+            StringBuilder sb = new StringBuilder("{");
+            Iterator<Map.Entry<String, Float>> iterator = map.entrySet().iterator();
+            while (iterator.hasNext()) {
+                Map.Entry<String, Float> entry = iterator.next();
+                sb.append("\"").append(entry.getKey()).append("\":").append(entry.getValue());
+                if (iterator.hasNext()) {
+                    sb.append(",");
+                }
+            }
+            sb.append("}");
+            return sb.toString();
+        }
+
+        private void precomputeAnimeSimilarities(Session session) {
+            session.run(
+                    "MATCH (a1:Anime), (a2:Anime) " +
+                            "WHERE a1 <> a2 " +
+                            "WITH a1, a2, apoc.convert.fromJsonMap(a1.characteristics) AS c1, apoc.convert.fromJsonMap(a2.characteristics) AS c2 "
+                            +
+                            "WITH a1, a2, c1, c2, [k IN keys(c1) WHERE k IN keys(c2) | c1[k] * c2[k]] AS commonChars " +
+                            "WITH a1, a2, REDUCE(s = 0, x IN commonChars | s + x) AS dotProduct, " +
+                            "SQRT(REDUCE(s = 0, x IN [k IN keys(c1) | c1[k] * c1[k]] | s + x)) AS norm1, " +
+                            "SQRT(REDUCE(s = 0, x IN [k IN keys(c2) | c2[k] * c2[k]] | s + x)) AS norm2 " +
+                            "MERGE (a1)-[s:SIMILAR_TO]->(a2) " +
+                            "SET s.similarity = CASE WHEN norm1 * norm2 = 0 THEN 0 ELSE dotProduct / (norm1 * norm2) END",
+                    Map.of());
         }
 
         private void initializeData() {
@@ -71,17 +136,23 @@ public class App {
             caracteristicasSAO.put("accion", 0.6f);
 
             Anime naruto = new Anime("A1", "Naruto", Arrays.asList(Genero.ACCION), caracteristicasNaruto);
-            Anime kimiNoNaWa = new Anime("A2", "Kimi no Na wa", Arrays.asList(Genero.ROMANCE), caracteristicasKimiNoNaWa);
+            Anime kimiNoNaWa = new Anime("A2", "Kimi no Na wa", Arrays.asList(Genero.ROMANCE),
+                    caracteristicasKimiNoNaWa);
             Anime sao = new Anime("A3", "Sword Art Online", Arrays.asList(Genero.FANTASIA), caracteristicasSAO);
 
             allAnimes = Arrays.asList(naruto, kimiNoNaWa, sao);
+        }
 
-            baseDeDatos = new BaseDeDatos();
-            Usuario luis = new Usuario("U2", "Luis");
-            luis.calificarAnime(naruto, 4);
-            luis.calificarAnime(kimiNoNaWa, 3);
-            baseDeDatos.agregarRating(luis, naruto, 4);
-            baseDeDatos.agregarRating(luis, kimiNoNaWa, 3);
+        private void initializeRecommenders() {
+            Map<String, Float> pesos = new HashMap<>();
+            pesos.put("violencia", 0.4f);
+            pesos.put("humor", 0.3f);
+            pesos.put("romance", 0.5f);
+            pesos.put("drama", 0.4f);
+            pesos.put("fantasia", 0.4f);
+            pesos.put("accion", 0.5f);
+            recomendadorContenido = new RecomendadorContenido(pesos, neo4jDriver);
+            recomendadorColaborativo = new RecomendadorColaborativo(0.3f, db);
         }
 
         private void setupModernGUI() {
@@ -143,7 +214,7 @@ public class App {
                     g2.fillRoundRect(0, 0, getWidth(), getHeight(), 15, 15);
 
                     g2.setColor(BORDER_LIGHT);
-                    g2.drawRoundRect(0, 0, getWidth()-1, getHeight()-1, 15, 15);
+                    g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 15, 15);
 
                     g2.dispose();
                     super.paintComponent(g);
@@ -168,13 +239,12 @@ public class App {
 
                     GradientPaint gradient = new GradientPaint(
                             0, 0, WARNING_ORANGE,
-                            getWidth(), getHeight(), new Color(231, 76, 60)
-                    );
+                            getWidth(), getHeight(), new Color(231, 76, 60));
                     g2.setPaint(gradient);
                     g2.fillRoundRect(0, 0, getWidth(), getHeight(), 25, 25);
 
                     g2.setColor(new Color(0, 0, 0, 30));
-                    g2.drawRoundRect(1, 1, getWidth()-3, getHeight()-3, 23, 23);
+                    g2.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, 23, 23);
 
                     g2.dispose();
                     super.paintComponent(g);
@@ -214,13 +284,12 @@ public class App {
 
                     GradientPaint gradient = new GradientPaint(
                             0, 0, ACCENT_BLUE,
-                            getWidth(), getHeight(), ACCENT_PURPLE
-                    );
+                            getWidth(), getHeight(), ACCENT_PURPLE);
                     g2.setPaint(gradient);
                     g2.fillRoundRect(0, 0, getWidth(), getHeight(), 25, 25);
 
                     g2.setColor(new Color(0, 0, 0, 30));
-                    g2.drawRoundRect(1, 1, getWidth()-3, getHeight()-3, 23, 23);
+                    g2.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, 23, 23);
 
                     g2.dispose();
                     super.paintComponent(g);
@@ -313,8 +382,7 @@ public class App {
 
                     GradientPaint gradient = new GradientPaint(
                             0, 0, ACCENT_BLUE,
-                            getWidth(), 0, ACCENT_PURPLE
-                    );
+                            getWidth(), 0, ACCENT_PURPLE);
                     g2.setPaint(gradient);
 
                     FontMetrics fm = g2.getFontMetrics();
@@ -328,7 +396,8 @@ public class App {
             titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 32));
             titleLabel.setPreferredSize(new Dimension(0, 60));
 
-            JLabel subtitleLabel = new JLabel("Descubre tu próximo anime favorito con IA avanzada", SwingConstants.CENTER);
+            JLabel subtitleLabel = new JLabel("Descubre tu próximo anime favorito con IA avanzada",
+                    SwingConstants.CENTER);
             subtitleLabel.setFont(new Font("Segoe UI", Font.ITALIC, 16));
             subtitleLabel.setForeground(TEXT_SECONDARY);
 
@@ -380,9 +449,10 @@ public class App {
             contentPanel.setBackground(CARD_BACKGROUND);
             contentPanel.setBorder(new EmptyBorder(20, 20, 20, 20));
 
-            String[] genreNames = {"Acción", "Comedia", "Romance", "Fantasía", "Slice of Life"};
-            Genero[] generos = {Genero.ACCION, Genero.COMEDIA, Genero.ROMANCE, Genero.FANTASIA, Genero.SLICE_OF_LIFE};
-            Color[] genreColors = {WARNING_ORANGE, SUCCESS_GREEN, new Color(231, 76, 60), ACCENT_PURPLE, new Color(241, 196, 15)};
+            String[] genreNames = { "Acción", "Comedia", "Romance", "Fantasía", "Slice of Life" };
+            Genero[] generos = { Genero.ACCION, Genero.COMEDIA, Genero.ROMANCE, Genero.FANTASIA, Genero.SLICE_OF_LIFE };
+            Color[] genreColors = { WARNING_ORANGE, SUCCESS_GREEN, new Color(231, 76, 60), ACCENT_PURPLE,
+                    new Color(241, 196, 15) };
 
             for (int i = 0; i < genreNames.length; i++) {
                 JCheckBox checkbox = createModernCheckbox(genreNames[i], genreColors[i]);
@@ -453,7 +523,7 @@ public class App {
                     g2.setColor(new Color(248, 249, 250));
                     g2.fillRoundRect(0, 0, getWidth(), getHeight(), 15, 15);
                     g2.setColor(BORDER_LIGHT);
-                    g2.drawRoundRect(0, 0, getWidth()-1, getHeight()-1, 15, 15);
+                    g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 15, 15);
 
                     g2.dispose();
                     super.paintComponent(g);
@@ -564,13 +634,13 @@ public class App {
                     g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
                     g2.setColor(new Color(0, 0, 0, 10));
-                    g2.fillRoundRect(4, 4, getWidth()-4, getHeight()-4, 20, 20);
+                    g2.fillRoundRect(4, 4, getWidth() - 4, getHeight() - 4, 20, 20);
 
                     g2.setColor(CARD_BACKGROUND);
-                    g2.fillRoundRect(0, 0, getWidth()-4, getHeight()-4, 20, 20);
+                    g2.fillRoundRect(0, 0, getWidth() - 4, getHeight() - 4, 20, 20);
 
                     g2.setColor(BORDER_LIGHT);
-                    g2.drawRoundRect(0, 0, getWidth()-5, getHeight()-5, 20, 20);
+                    g2.drawRoundRect(0, 0, getWidth() - 5, getHeight() - 5, 20, 20);
 
                     g2.dispose();
                     super.paintComponent(g);
@@ -614,9 +684,9 @@ public class App {
                     detallesAnimeArea.setText(detallesAnime);
                     showModernDialog("Búsqueda Exitosa", "Anime encontrado en la base de datos!", SUCCESS_GREEN);
                 } else {
-                    String mensajeError = "═══════════════════════════════════════════════════════════════\n" +
+                    String mensajeError = "---------------------------------------------------------------\n" +
                             "ANIME NO ENCONTRADO: " + nombreAnime.toUpperCase() + "\n" +
-                            "═══════════════════════════════════════════════════════════════\n\n" +
+                            "---------------------------------------------------------------\n\n" +
                             "El anime '" + nombreAnime + "' no fue encontrado en la base de datos.\n\n" +
                             "Sugerencias:\n" +
                             "- Verifica la ortografía del nombre\n" +
@@ -630,7 +700,8 @@ public class App {
                             "- 'Death Note'";
 
                     detallesAnimeArea.setText(mensajeError);
-                    showModernDialog("Anime No Encontrado", "No se encontró el anime en la base de datos.", WARNING_ORANGE);
+                    showModernDialog("Anime No Encontrado", "No se encontró el anime en la base de datos.",
+                            WARNING_ORANGE);
                 }
             }
         }
@@ -638,11 +709,11 @@ public class App {
         private String formatearResultadoBusqueda(Map<String, String> info) {
             StringBuilder sb = new StringBuilder();
 
-            String titulo = info.getOrDefault("title", "ANIME ENCONTRADO");
+            String title = info.getOrDefault("title", "ANIME ENCONTRADO");
 
-            sb.append("═══════════════════════════════════════════════════════════════\n");
-            sb.append("INFORMACIÓN DETALLADA: ").append(titulo.toUpperCase()).append("\n");
-            sb.append("═══════════════════════════════════════════════════════════════\n\n");
+            sb.append("---------------------------------------------------------------\n");
+            sb.append("INFORMACIÓN DETALLADA: ").append(title.toUpperCase()).append("\n");
+            sb.append("---------------------------------------------------------------\n\n");
 
             String[] camposImportantes = {
                     "anime_id", "anime_url", "title", "synopsis", "main_pic",
@@ -689,10 +760,10 @@ public class App {
                 sb.append(String.format("%-20s: %s\n", "PICS", info.get("pics")));
             }
 
-            sb.append("\n═══════════════════════════════════════════════════════════════\n");
+            sb.append("\n---------------------------------------------------------------\n");
             sb.append("DATOS OBTENIDOS DE: anime.csv\n");
             sb.append("SISTEMA DE BÚSQUEDA REAL v2.0 - Powered by Busqueda.java\n");
-            sb.append("═══════════════════════════════════════════════════════════════");
+            sb.append("---------------------------------------------------------------");
 
             return sb.toString();
         }
@@ -709,47 +780,58 @@ public class App {
 
                         String nombre = nombreField.getText().trim();
                         if (nombre.isEmpty()) {
-                            showModernDialog("Atención", "Por favor, ingresa tu nombre para continuar.", WARNING_ORANGE);
+                            showModernDialog("Atención", "Por favor, ingresa tu nombre para continuar.",
+                                    WARNING_ORANGE);
                             resetButton();
                             return;
                         }
 
-                        Usuario usuario = new Usuario("U" + (baseDeDatos.getRatings().size() + 1), nombre);
+                        String userId = "U" + System.currentTimeMillis();
+                        try (Session session = neo4jDriver.session()) {
+                            session.run("CREATE (u:User {id: $id, name: $name})",
+                                    Map.of("id", userId, "name", nombre));
 
-                        for (Map.Entry<JCheckBox, Genero> entry : generoCheckboxes.entrySet()) {
-                            if (entry.getKey().isSelected()) {
-                                usuario.agregarPreferencia(entry.getValue(), 5);
+                            for (Map.Entry<JCheckBox, Genero> entry : generoCheckboxes.entrySet()) {
+                                if (entry.getKey().isSelected()) {
+                                    session.run("MERGE (g:Genre {name: $name}) " +
+                                            "CREATE (u:User {id: $userId})-[:PREFERS {preferenceScore: 5}]->(g)",
+                                            Map.of("name", entry.getValue().toString(), "userId", userId));
+                                }
                             }
-                        }
 
-                        boolean hasRatings = false;
-                        for (Map.Entry<Anime, JSlider> entry : animeSliders.entrySet()) {
-                            Anime anime = entry.getKey();
-                            int rating = entry.getValue().getValue();
+                            boolean hasRatings = false;
+                            for (Map.Entry<Anime, JSlider> entry : animeSliders.entrySet()) {
+                                Anime anime = entry.getKey();
+                                int rating = entry.getValue().getValue();
 
-                            if (rating == 0) continue;
-                            if (rating < 0 || rating > 10) continue;
+                                if (rating == 0)
+                                    continue;
+                                if (rating < 0 || rating > 10)
+                                    continue;
 
-                            usuario.calificarAnime(anime, rating);
-                            baseDeDatos.agregarRating(usuario, anime, rating);
-                            hasRatings = true;
-                        }
+                                db.agregarRating(userId, anime.getId(), rating);
+                                hasRatings = true;
+                            }
 
-                        if (!hasRatings) {
-                            showModernDialog("Atención", "Por favor, califica al menos un anime para obtener recomendaciones.", WARNING_ORANGE);
+                            if (!hasRatings) {
+                                showModernDialog("Atención",
+                                        "Por favor, califica al menos un anime para obtener recomendaciones.",
+                                        WARNING_ORANGE);
+                                resetButton();
+                                return;
+                            }
+
+                            String recommendations = generateModernRecommendations(userId, nombre, session);
+                            recomendacionesArea.setText(recommendations);
+
+                            showModernDialog("Éxito", "Recomendaciones generadas exitosamente!", SUCCESS_GREEN);
                             resetButton();
-                            return;
                         }
-
-                        String recommendations = generateModernRecommendations(usuario);
-                        recomendacionesArea.setText(recommendations);
-
-                        showModernDialog("Éxito", "Recomendaciones generadas exitosamente!", SUCCESS_GREEN);
-                        resetButton();
-
                     } catch (Exception ex) {
                         resetButton();
                         ex.printStackTrace();
+                        showModernDialog("Error", "Ocurrió un error al generar las recomendaciones: " + ex.getMessage(),
+                                WARNING_ORANGE);
                     }
                 });
             }
@@ -758,6 +840,110 @@ public class App {
                 processButton.setText("GENERAR RECOMENDACIONES");
                 processButton.setEnabled(true);
             }
+        }
+
+        private String generateModernRecommendations(String userId, String userName, Session session) {
+            StringBuilder sb = new StringBuilder();
+
+            sb.append("---------------------------------------------------------------\n");
+            sb.append("RECOMENDACIONES PERSONALIZADAS PARA: ").append(userName.toUpperCase()).append("\n");
+            sb.append("---------------------------------------------------------------\n\n");
+
+            // Collaborative filtering
+            List<Record> similarUsers = db.getSimilarUsers(userId);
+            Map<String, Map<String, Object>> collaborativeRecommendations = new HashMap<>();
+            for (Record record : similarUsers) {
+                String similarUserId = record.get("userId").asString();
+                String similarUserName = record.get("userName").asString();
+                float similarity = (float) record.get("similarity").asDouble();
+                @SuppressWarnings("unchecked")
+                List<String> commonAnimes = (List<String>) record.get("commonAnimes").asList(Value::asString);
+
+                List<Record> ratedAnimes = session.run(
+                        "MATCH (u:User {id: $userId})-[r:RATED]->(a:Anime) " +
+                                "WHERE NOT (a)<-[:RATED]-(:User {id: $currentUserId}) " +
+                                "RETURN a.id AS animeId, a.name AS animeName, a.genres AS genres, r.rating AS rating",
+                        Map.of("userId", similarUserId, "currentUserId", userId)).list();
+
+                Map<String, Object> userInfo = new HashMap<>();
+                userInfo.put("name", similarUserName);
+                userInfo.put("similarity", similarity);
+                userInfo.put("commonAnimes", commonAnimes);
+                userInfo.put("ratedAnimes", ratedAnimes);
+                collaborativeRecommendations.put(similarUserId, userInfo);
+            }
+
+            // Format collaborative recommendations
+            if (!collaborativeRecommendations.isEmpty()) {
+                sb.append("RECOMENDACIONES COLABORATIVAS\n");
+                sb.append("Basado en usuarios con gustos similares:\n\n");
+                for (Map.Entry<String, Map<String, Object>> entry : collaborativeRecommendations.entrySet()) {
+                    Map<String, Object> userInfo = entry.getValue();
+                    String similarUserName = (String) userInfo.get("name");
+                    float similarity = (float) userInfo.get("similarity");
+                    @SuppressWarnings("unchecked")
+                    List<String> commonAnimes = (List<String>) userInfo.get("commonAnimes");
+                    @SuppressWarnings("unchecked")
+                    List<Record> ratedAnimes = (List<Record>) userInfo.get("ratedAnimes");
+
+                    // Use similarUserName instead of similarUserId
+                    sb.append("Usuario similar: ").append(similarUserName)
+                            .append(" (similitud: ").append(String.format("%.1f%%", similarity * 100)).append(")\n");
+                    sb.append("   Animes en común: ").append(String.join(", ", commonAnimes)).append("\n");
+
+                    for (Record animeRecord : ratedAnimes) {
+                        String animeName = animeRecord.get("animeName").asString();
+                        @SuppressWarnings("unchecked")
+                        List<String> genres = (List<String>) animeRecord.get("genres").asObject();
+                        int rating = animeRecord.get("rating").asInt();
+                        sb.append("   Recomendación: ").append(animeName)
+                                .append(" - Rating: ").append(rating).append("/10\n");
+                        sb.append("      Géneros: ").append(String.join(", ", genres)).append("\n");
+                    }
+                    sb.append("\n");
+                }
+            } else {
+                sb.append("RECOMENDACIONES COLABORATIVAS\n");
+                sb.append("No se encontraron usuarios con gustos suficientemente similares.\n");
+                sb.append("   Tip: Califica más animes para encontrar usuarios afines!\n\n");
+            }
+
+            sb.append("---------------------------------------------------------------\n\n");
+
+            // Content-based filtering
+            List<Record> similarAnimes = session.run(
+                    "MATCH (u:User {id: $userId})-[:RATED {rating: $minRating}]->(a1:Anime)-[s:SIMILAR_TO]->(a2:Anime) "
+                            +
+                            "WHERE NOT (a2)<-[:RATED]-(:User {id: $userId}) AND s.similarity > 0.3 " +
+                            "RETURN a2.id AS animeId, a2.name AS animeName, a2.genres AS genres, s.similarity AS similarity "
+                            +
+                            "ORDER BY s.similarity DESC LIMIT 3",
+                    Map.of("userId", userId, "minRating", 4)).list();
+
+            if (!similarAnimes.isEmpty()) {
+                sb.append("RECOMENDACIONES POR CONTENIDO\n");
+                sb.append("Basado en animes similares a los que te gustaron:\n\n");
+                for (Record record : similarAnimes) {
+                    String animeName = record.get("animeName").asString();
+                    @SuppressWarnings("unchecked")
+                    List<String> genres = (List<String>) record.get("genres").asObject();
+                    double similarity = record.get("similarity").asDouble();
+                    sb.append(animeName).append("\n");
+                    sb.append("   Similitud: ").append(String.format("%.1f%%", similarity * 100)).append("\n");
+                    sb.append("   Géneros: ").append(String.join(", ", genres)).append("\n\n");
+                }
+            } else {
+                sb.append("RECOMENDACIONES POR CONTENIDO\n");
+                sb.append("No se encontraron animes con características suficientemente similares.\n");
+                sb.append("   Tip: Califica con puntuaciones más altas (4+) para mejores resultados!\n\n");
+            }
+
+            sb.append("---------------------------------------------------------------\n");
+            sb.append("SISTEMA DE IA AVANZADA - PRECISION ALGORITHM v2.0\n");
+            sb.append("Disfruta tus nuevas recomendaciones de anime!\n");
+            sb.append("---------------------------------------------------------------");
+
+            return sb.toString();
         }
 
         private void showModernDialog(String title, String message, Color accentColor) {
@@ -794,94 +980,17 @@ public class App {
             dialog.setVisible(true);
         }
 
-        private String generateModernRecommendations(Usuario usuario) {
-            StringBuilder sb = new StringBuilder();
-
-            sb.append("═══════════════════════════════════════════════════════════════\n");
-            sb.append("RECOMENDACIONES PERSONALIZADAS PARA: ").append(usuario.getNombre().toUpperCase()).append("\n");
-            sb.append("═══════════════════════════════════════════════════════════════\n\n");
-
-            RecomendadorColaborativo rc = new RecomendadorColaborativo(0.5f, baseDeDatos);
-            Map<Usuario, Float> similarUsers = new HashMap<>();
-            for (Usuario otherUser : baseDeDatos.getRatings().keySet()) {
-                if (!otherUser.getId().equals(usuario.getId())) {
-                    float similitud = rc.calcularSimilaridadUsuarios(usuario, otherUser);
-                    if (similitud >= 0.5f) {
-                        similarUsers.put(otherUser, similitud);
-                    }
-                }
+        @Override
+        public void close() {
+            if (neo4jDriver != null) {
+                neo4jDriver.close();
             }
+        }
 
-            Map<String, Float> pesosCaracteristicas = new HashMap<>();
-            pesosCaracteristicas.put("violencia", 1.0f);
-            pesosCaracteristicas.put("humor", 0.5f);
-            pesosCaracteristicas.put("romance", 1.0f);
-            pesosCaracteristicas.put("drama", 0.8f);
-            pesosCaracteristicas.put("fantasia", 0.7f);
-            pesosCaracteristicas.put("accion", 0.9f);
-
-            RecomendadorContenido rcont = new RecomendadorContenido(pesosCaracteristicas);
-            Map<Anime, Float> similarAnimes = new HashMap<>();
-            for (Anime ratedAnime : usuario.getCalificaciones().keySet()) {
-                if (usuario.getCalificaciones().get(ratedAnime) >= 4) {
-                    for (Anime otherAnime : allAnimes) {
-                        if (!otherAnime.getId().equals(ratedAnime.getId()) && !usuario.getCalificaciones().containsKey(otherAnime)) {
-                            float similitud = rcont.calcularSimilaridadAnimes(ratedAnime, otherAnime);
-                            if (similitud > 0.3f) {
-                                similarAnimes.put(otherAnime, similitud);
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (!similarUsers.isEmpty()) {
-                sb.append("RECOMENDACIONES COLABORATIVAS\n");
-                sb.append("Basado en usuarios con gustos similares:\n\n");
-                for (Map.Entry<Usuario, Float> entry : similarUsers.entrySet()) {
-                    Usuario similarUser = entry.getKey();
-                    sb.append("Usuario similar: ").append(similarUser.getNombre())
-                            .append(" (similitud: ").append(String.format("%.1f%%", entry.getValue() * 100)).append(")\n");
-
-                    for (Map.Entry<Anime, Integer> rating : similarUser.getCalificaciones().entrySet()) {
-                        Anime anime = rating.getKey();
-                        if (!usuario.getCalificaciones().containsKey(anime)) {
-                            sb.append("   ").append(anime.getNombre())
-                                    .append(" - Rating: ").append(rating.getValue()).append("/10\n");
-                            sb.append("      Géneros: ").append(String.join(", ", anime.getGeneros())).append("\n");
-                        }
-                    }
-                    sb.append("\n");
-                }
-            } else {
-                sb.append("RECOMENDACIONES COLABORATIVAS\n");
-                sb.append("No se encontraron usuarios con gustos suficientemente similares.\n");
-                sb.append("   Tip: Califica más animes para encontrar usuarios afines!\n\n");
-            }
-
-            sb.append("───────────────────────────────────────────────────────────────\n\n");
-
-            if (!similarAnimes.isEmpty()) {
-                sb.append("RECOMENDACIONES POR CONTENIDO\n");
-                sb.append("Basado en animes similares a los que te gustaron:\n\n");
-                for (Map.Entry<Anime, Float> entry : similarAnimes.entrySet()) {
-                    Anime anime = entry.getKey();
-                    sb.append(anime.getNombre()).append("\n");
-                    sb.append("   Similitud: ").append(String.format("%.1f%%", entry.getValue() * 100)).append("\n");
-                    sb.append("   Géneros: ").append(String.join(", ", anime.getGeneros())).append("\n\n");
-                }
-            } else {
-                sb.append("RECOMENDACIONES POR CONTENIDO\n");
-                sb.append("No se encontraron animes con características suficientemente similares.\n");
-                sb.append("   Tip: Califica con puntuaciones más altas (4+) para mejores resultados!\n\n");
-            }
-
-            sb.append("═══════════════════════════════════════════════════════════════\n");
-            sb.append("SISTEMA DE IA AVANZADA - PRECISION ALGORITHM v2.0\n");
-            sb.append("Disfruta tus nuevas recomendaciones de anime!\n");
-            sb.append("═══════════════════════════════════════════════════════════════");
-
-            return sb.toString();
+        @Override
+        public void dispose() {
+            close();
+            super.dispose();
         }
     }
 }
